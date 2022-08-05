@@ -45,7 +45,7 @@ public class CellposeBuilder {
     private Boolean excludeEdges = Boolean.FALSE;
     private Boolean doCluster = Boolean.FALSE;
     private Boolean useGPU = Boolean.FALSE;
-    private Boolean doLog = Boolean.FALSE;
+
 
     private Double maskThreshold = Double.NaN;
     private Double flowThreshold = Double.NaN;
@@ -81,9 +81,6 @@ public class CellposeBuilder {
     private transient boolean saveBuilder;
     private transient String builderName;
     private double simplifyDistance = 0.0;
-    private boolean useCellposeNormalization = true;
-    private boolean useGlobalNorm = false;
-    private int globalNormalizationScale = 8;
     private double normPercentileMin = -1.0;
     private double normPercentileMax = -1.0;
     private int overlap;
@@ -102,7 +99,7 @@ public class CellposeBuilder {
         Gson gson = GsonTools.getInstance();
         try {
             gson.fromJson(new FileReader(builderFile), CellposeBuilder.class);
-            log("Builder parameters loaded from {}", builderFile);
+            logger.info("Builder parameters loaded from {}", builderFile);
         } catch (FileNotFoundException e) {
             logger.error("Could not load builder from "+builderFile.getAbsolutePath(), e);
         }
@@ -158,7 +155,8 @@ public class CellposeBuilder {
         this.normPercentileMin = min;
         this.normPercentileMax = max;
 
-        //this.ops.add(ImageOps.Normalize.percentile(min, max));
+        this.ops.add(ImageOps.Normalize.percentile(min, max));
+        this.ops.add(ImageOps.Core.clip(0.0,1.0));
         return this;
     }
 
@@ -278,22 +276,6 @@ public class CellposeBuilder {
         return this;
     }
 
-    public CellposeBuilder useCellposeNormalization( boolean useCellposeNorm){
-        this.useCellposeNormalization = useCellposeNorm;
-        return this;
-    }
-
-    public CellposeBuilder useGlobalNormalization( boolean useGlobalNorm) {
-        this.useGlobalNorm = useGlobalNorm;
-        return this;
-    }
-
-    public CellposeBuilder globalNormalizationScale( int globalNormDownsampling ) {
-        this.globalNormalizationScale = globalNormDownsampling;
-        return this;
-    }
-
-
         /**
          * Sets the channels to use by cellpose, in case there is an issue with the order or the number of exported channels
          * @param channel1 the main channel
@@ -360,7 +342,9 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder useOmnipose() {
-        if( this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE) ) {
+        if( this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE) ||
+                this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2)) {
             this.useOmnipose = true;
         } else {
             logger.warn("--omni flag not available in {}", CellposeSetup.CellposeVersion.CELLPOSE);
@@ -374,7 +358,7 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder excludeEdges() {
-    	if(! this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE)) {
+        if( this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE) ) {
             this.excludeEdges = true;
         } else {
             logger.warn("--exclude_edges flag not available in {}", CellposeSetup.CellposeVersion.CELLPOSE);
@@ -404,15 +388,6 @@ public class CellposeBuilder {
     public CellposeBuilder useGPU() {
         this.useGPU = Boolean.TRUE;
         return this;
-    }
-    
-    /**
-     * Request that progress is logged. If this is not specified, progress is only logged at the DEBUG level.
-     * @return this builder
-     */
-    public CellposeBuilder doLog() {
-	this.doLog = Boolean.TRUE;
-	return this;
     }
 
     /**
@@ -626,13 +601,6 @@ public class CellposeBuilder {
         this.overlap = overlap;
         return this;
     }
-    
-    private void log(String message, Object... arguments) {
-	if (doLog)
-		logger.info(message, arguments);
-	else
-		logger.debug(message, arguments);			
-    }
 
     /**
      * Create a {@link Cellpose2D}, all ready for detection.
@@ -649,7 +617,7 @@ public class CellposeBuilder {
         // Check the model. If it is a file, then it is a custom model
         File file = new File(model);
         if (file.isFile()) {
-            log("Provided model {} is a file. Assuming custom model", file);
+            logger.info("Provided model {} is a file. Assuming custom model", file);
         }
 
         // Pass all cellpose options in one go...
@@ -686,21 +654,10 @@ public class CellposeBuilder {
 
         cellpose.invert = isInvert;
 
-        if (cellpose.useCellposeNormalization) log("Using Cellpose Normalization (per tile).");
-        cellpose.useCellposeNormalization = useCellposeNormalization;
-
-        if (cellpose.useGlobalNorm && cellpose.useCellposeNormalization) {
-            logger.warn("You cannot use global normalization and enable 'use cellpose normalization' at the same time!. Will default to cellpose normalization (per tile).");
-        } else {
-            log("Using global normalization with a downsampling factor of {}", globalNormalizationScale);
-            cellpose.useGlobalNorm = useGlobalNorm;
-            cellpose.globalNormalizationScale = globalNormalizationScale;
-        }
         cellpose.doCluster = doCluster;
         cellpose.excludeEdges = excludeEdges;
         cellpose.useOmnipose = useOmnipose;
         cellpose.useGPU = useGPU;
-        cellpose.doLog = doLog;
 
         // Pick up info on project location
         File quPathProjectDir = QP.getProject().getPath().getParent().toFile();
@@ -730,10 +687,6 @@ public class CellposeBuilder {
         cellpose.learningRate = learningRate;
         cellpose.batchSize = batchSize;
 
-        cellpose.normPercentileMax = normPercentileMax;
-        cellpose.normPercentileMin = normPercentileMin;
-
-
         // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
         // in at least one tile for resolving overlaps
         if (this.overlap > 0) {
@@ -747,7 +700,10 @@ public class CellposeBuilder {
                 cellpose.overlap = (int) Math.round(2 * diameter);
             }
         }
-        log("If tiling is necessary, {} pixels overlap will be taken between tiles", cellpose.overlap);
+        logger.info("If tiling is necessary, {} pixels overlap will be taken between tiles", cellpose.overlap);
+
+        if (this.normPercentileMax > -1.0 && this.normPercentileMin > -1.0 )
+            logger.warn("You called the builder with normalization, values below 0 and above after normalization will be clipped");
 
         // Intersection over union threshold to deal with duplicates
         cellpose.iouThreshold = iouThreshold;
@@ -779,7 +735,7 @@ public class CellposeBuilder {
                 gson.toJson(this, CellposeBuilder.class, fw);
                 fw.flush();
                 fw.close();
-                log("Cellpose Builder serialized and saved to {}", savePath);
+                logger.info("Cellpose Builder serialized and saved to {}", savePath);
 
             } catch (IOException e) {
                 logger.error("Could not save builder to JSON file "+savePath.getAbsolutePath(), e);

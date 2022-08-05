@@ -20,7 +20,7 @@ import qupath.ext.biop.cellpose.CellposeSetup.CellposeVersion;
 /**
  * Install Cellpose as an extension.
  * <p>
- * Installs Cellpose into QuPath, adding some metadata and adds the necessary global variables to QuPath's Preferences
+ * Ibnstalls Cellpose into QuPath, adding some metadata and adds the necessary global variables to QuPath's Preferences
  *
  * @author Olivier Burri
  */

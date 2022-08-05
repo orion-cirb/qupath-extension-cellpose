@@ -94,12 +94,6 @@ public class Cellpose2D {
     public Double learningRate = null;
     public Integer batchSize = null;
     public double simplifyDistance = 0.0;
-    public double normPercentileMin = -1.0;
-    public double normPercentileMax = -1.0;
-
-    protected boolean useCellposeNormalization = true;
-    protected boolean useGlobalNorm = false;
-    protected int globalNormalizationScale = 8;
 
     protected Integer channel1 = 0;
     protected Integer channel2 = 0;
@@ -133,7 +127,6 @@ public class Cellpose2D {
     protected Integer nEpochs = null;
     protected CellposeSetup cellposeSetup = CellposeSetup.getInstance();
     protected Boolean useGPU = Boolean.FALSE;
-    protected Boolean doLog = Boolean.FALSE;
     private File cellposeTempFolder = null;
 
     private String[] theLog;
@@ -151,7 +144,7 @@ public class Cellpose2D {
     }
 
     /**
-     * Load a previouslt serialized builder.
+     * Load a previously serialized builder.
      * See {@link CellposeBuilder#CellposeBuilder(File)} and {@link CellposeBuilder#saveBuilder(String)}
      *
      * @param builderPath path to the builder JSON file.
@@ -200,14 +193,6 @@ public class Cellpose2D {
             return geom;
         }
     }
-    
-    private void log(String message, Object... arguments) {
-	if (doLog)
-		logger.info(message, arguments);
-	else
-		logger.debug(message, arguments);			
-    }
-    
 
     /**
      * Detect cells within one or more parent objects, firing update events upon completion.
@@ -226,7 +211,7 @@ public class Cellpose2D {
         cellposeTempFolder = new File(QP.buildFilePath(QP.PROJECT_BASE_DIR, "cellpose-temp"));
         boolean mkdirs = cellposeTempFolder.mkdirs();
         if (!mkdirs)
-            log("Folder creation of {} was interrupted. Either the folder exists or there was a problem.", cellposeTempFolder);
+            logger.info("Folder creation of {} was interrupted. Either the folder exists or there was a problem.", cellposeTempFolder);
         try {
             FileUtils.cleanDirectory(cellposeTempFolder);
         } catch (IOException e) {
@@ -253,7 +238,7 @@ public class Cellpose2D {
             Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileWidth * finalDownsample), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileHeight * finalDownsample), true, overlap);
 
             // Keep a reference to the images here while they are being saved
-            log("Saving images for {} tiles", rois.size());
+            logger.info("Saving images for {} tiles", rois.size());
 
             // Save each tile to an image and keep a reference to it
             var individualTiles = rois.parallelStream()
@@ -287,9 +272,9 @@ public class Cellpose2D {
                 File ori = tilefile.getFile();
                 File maskFile = new File(ori.getParent(), FilenameUtils.removeExtension(ori.getName()) + "_cp_masks.tif");
                 if (maskFile.exists()) {
-                    log("Getting objects for {}", maskFile);
+                    logger.info("Getting objects for {}", maskFile);
 
-                    // thank you Pete for the ContourTracing Class
+                    // thank you, Pete for the ContourTracing Class
                     List<PathObject> detections = null;
                     try {
                         detections = ContourTracing.labelsToDetections( maskFile.toPath(), tilefile.getTile());
@@ -298,7 +283,7 @@ public class Cellpose2D {
                         // Clean Detections
                         detections = detections.parallelStream().map(det -> {
                             if (det.getROI().getGeometry().getNumGeometries() > 1) {
-                                // Detemine largest one
+                                // Determine largest one
                                 Geometry geom = det.getROI().getGeometry();
                                 double largestArea = geom.getGeometryN(0).getArea();
                                 int idx = 0;
@@ -315,7 +300,7 @@ public class Cellpose2D {
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                    log("Getting objects for {} Done", maskFile);
+                    logger.info("Getting objects for {} Done", maskFile);
 
                     allDetections.addAll(detections);
                 }
@@ -343,7 +328,7 @@ public class Cellpose2D {
 
             // Resolve cell overlaps, if needed
             if (expansion > 0 && !ignoreCellOverlaps) {
-                log("Resolving cell overlaps for {}", parent);
+                logger.info("Resolving cell overlaps for {}", parent);
                 if (creatorFun != null) {
                     // It's awkward, but we need to temporarily convert to cells and back
                     var cells = filteredDetections.stream().map(Cellpose2D::objectToCell).collect(Collectors.toList());
@@ -359,7 +344,7 @@ public class Cellpose2D {
 
             // Add intensity measurements, if needed
             if (!filteredDetections.isEmpty() && !measurements.isEmpty()) {
-                log("Making measurements for {}", parent);
+                logger.info("Making measurements for {}", parent);
                 var stains = imageData.getColorDeconvolutionStains();
                 var builder = new TransformedServerBuilder(server);
                 if (stains != null) {
@@ -528,8 +513,8 @@ public class Cellpose2D {
 
         //BufferedImage image = OpenCVTools.matToBufferedImage(mat);
 
-        File tempFile = new File(cellposeTempFolder, "Temp_" + request.getX() + "_" + request.getY() + "_" + request.getZ() + ".tif");
-        log("Saving to {}", tempFile);
+        File tempFile = new File(cellposeTempFolder, "Temp_" + request.getX() + "_" + request.getY() + "_" + request.getZ()+ ".tif");
+        logger.info("Saving to {}", tempFile);
         IJ.save(imp, tempFile.getAbsolutePath());
 
         return new TileFile(request, tempFile);
@@ -572,8 +557,8 @@ public class Cellpose2D {
             cellposeArguments.add("" + flowThreshold);
         }
 
-        if (!maskThreshold.isNaN() && !cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) ) {
-            if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE))
+        if (!maskThreshold.isNaN() ) {
+            if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE) || cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
                 cellposeArguments.add("--cellprob_threshold");
             else
                 cellposeArguments.add("--mask_threshold");
@@ -597,7 +582,8 @@ public class Cellpose2D {
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if (doLog)
+        if ( cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -605,7 +591,7 @@ public class Cellpose2D {
         // Finally, we can run Cellpose
         theLog = veRunner.runCommand();
 
-        log("Cellpose command finished running");
+        logger.info("Cellpose command finished running");
     }
 
     /**
@@ -685,7 +671,8 @@ public class Cellpose2D {
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if (doLog)
+        if ( cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -693,7 +680,7 @@ public class Cellpose2D {
         // Finally, we can run Cellpose
         theLog = veRunner.runCommand();
 
-        log("Cellpose command finished running");
+        logger.info("Cellpose command finished running");
     }
 
     /**
@@ -736,7 +723,7 @@ public class Cellpose2D {
     }
 
     /**
-     * Displays a JavaFX graph as a dialog so you can inspect the Losses per epoch
+     * Displays a JavaFX graph as a dialog, so you can inspect the Losses per epoch
      */
     public void showTrainingGraph() {
         ResultsTable output = getTrainingResults();
@@ -772,11 +759,11 @@ public class Cellpose2D {
     }
 
     /**
-     * Saves the the images from two servers (typically a server with the original data and another with labels)
+     * Saves the images from two servers (typically a server with the original data and another with labels)
      * to the right directories as image/mask pairs, ready for cellpose
      *
      * @param annotations    the annotations in which to create RegionRequests to save
-     * @param imageName      thge desired name of the images (the position of the request will be appended to make them unique)
+     * @param imageName      the desired name of the images (the position of the request will be appended to make them unique)
      * @param originalServer the server that will contain the images
      * @param labelServer    the server that contains the labels
      * @param saveDirectory  the location where to save the pair of images
@@ -804,7 +791,7 @@ public class Cellpose2D {
 
                 ImageWriterTools.writeImageRegion(originalServer, request, imageFile.getAbsolutePath());
                 ImageWriterTools.writeImageRegion(labelServer, request, maskFile.getAbsolutePath());
-                log("Saved image pair: \n\t{}\n\t{}", imageFile.getName(), maskFile.getName());
+                logger.info("Saved image pair: \n\t{}\n\t{}", imageFile.getName(), maskFile.getName());
 
             } catch (IOException ex) {
                 logger.error(ex.getMessage());
@@ -815,9 +802,8 @@ public class Cellpose2D {
     /**
      * Save training images for the project
      *
-     * @throws IOException an error in case the images cannot be saved
      */
-    private void saveTrainingImages() throws IOException {
+    private void saveTrainingImages() {
 
         Project<BufferedImage> project = QP.getProject();
         // Prepare location to save images
@@ -836,7 +822,7 @@ public class Cellpose2D {
                 List<PathObject> trainingAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Training")).collect(Collectors.toList());
                 List<PathObject> validationAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Validation")).collect(Collectors.toList());
 
-                log("Found {} Training objects and {} Validation Objects in image {}", trainingAnnotations.size(), validationAnnotations.size(), imageName);
+                logger.info("Found {} Training objects and {} Validation Objects in image {}", trainingAnnotations.size(), validationAnnotations.size(), imageName);
                 if (!trainingAnnotations.isEmpty() || !validationAnnotations.isEmpty()) {
                     // Make the server using the required ops
                     ImageServer<BufferedImage> processed = ImageOps.buildServer(imageData, op, imageData.getServer().getPixelCalibration(), 2048, 2048);
@@ -870,7 +856,7 @@ public class Cellpose2D {
         File[] all = cellPoseModelFolder.listFiles();
         Optional<File> cellPoseModel = Arrays.stream(Objects.requireNonNull(all)).filter(f -> f.getName().contains("cellpose")).findFirst();
         if (cellPoseModel.isPresent()) {
-            log("Found model file at {} ", cellPoseModel);
+            logger.info("Found model file at {} ", cellPoseModel);
             File model = cellPoseModel.get();
             File newModel = new File(modelDirectory, model.getName());
             FileUtils.copyFile(model, newModel);
